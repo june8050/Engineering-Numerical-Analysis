@@ -1,0 +1,140 @@
+fullscreen = get(0,'ScreenSize');
+figure('Position',[0 -50 fullscreen(3) fullscreen(4)])
+view(45,30)
+axis([0,100000,0,100000,0,40000]); %set range of each axis, unit:meter
+hold on
+
+%mark Israel territory
+range_x = [85000:-1000:75000 75000*ones(1,11) 75000:1000:85000 85000*ones(1,11)];
+range_y = [75000*ones(1,11) 75000:1000:85000 85000*ones(1,11) 85000:-1000:75000];
+range_z = zeros(1,length(range_x));
+plot3(range_x,range_y,range_z,'-','Color','g','LineWidth',1);
+
+%reset count for hit/miss/safe missiles
+hit_count = 0;
+miss_count = 0;
+safe_count = 0;
+
+while hit_count < 20 %at the beginning of each iteration, reset every settings and data
+    
+    %declare two animations of line
+    palestine_missile = animatedline('Color','r','LineWidth',1);
+    iron_dome = animatedline('Color','b','LineWidth',1);
+    %belows will highlight currently where the missiles are
+    palestine_missile_dot = plot3(0,0,0,'o','MarkerFaceColor','red');
+    iron_dome_dot = plot3(80000,80000,0,'o','MarkerFaceColor','blue');
+    
+    %status indicates if the missile is launched/intercepted/landed
+    status = 'launched'
+    %risk indicates if the missile is going to land on our territory or not
+    risk = 'unknown'
+    
+    %generate wind disturbance randomly
+    Fx = -5 + 10*rand;Fy = -5 + 10*rand;Fz = -5 + 10*rand;
+    
+    %Palestine`s launching angle is fixed toward Israel.
+    %Assume horizontal and vertical angles are both pi/4
+    theta=pi/4;
+    phai=pi/4;
+    
+    
+    m = 30;%mass of Palestine`s missile is 30kg
+    M = 80;%mass of Iron-dome is 80kg
+    %initial velocity of Palestine`s missile varies from 1053+-50 because
+    %they use out dated missiles
+    v0= 1053 + ( -50 + 100*rand);
+    
+    %t0 is time taken to reach Israel territory
+    t0= 2*v0*cos(phai)/9.81;
+    %make vector of time with 10000 intervals
+    t = linspace(0,t0,10000);
+    timeinterval = t(1,2) - t(1,1);
+    
+    %make vectors of x,y,z coordinate at each time intervals
+    x = v0*sin(phai)*cos(theta).*t + Fx*(t.^2)/(2*m);
+    y = v0*sin(phai)*sin(theta).*t + Fy*(t.^2)/(2*m);
+    z = v0*cos(phai).*t + (Fz/m - 9.8)*(t.^2)/2;
+    
+    %reset radar detection history
+    xdetect = zeros(1,7000);ydetect = zeros(1,7000);zdetect = zeros(1,7000);
+    %reset trajectory prediction
+    irondome_x = 80000.*ones(1,10000);irondome_y = 80000.*ones(1,10000);irondome_z = zeros(1,10000);
+    
+    k=1;
+    while k <= length(t)
+        %add point to palestine missile trajectory
+        addpoints(palestine_missile,x(k),y(k),z(k));
+        palestine_missile_dot.XData = x(k);palestine_missile_dot.YData = y(k);palestine_missile_dot.ZData = z(k);
+        
+        if strcmp(risk,'danger')
+            %if palestine missile is danger enough, start adding points to iron-dome trajectory
+            addpoints(iron_dome,irondome_x(k),irondome_y(k),irondome_z(k));
+            iron_dome_dot.XData=irondome_x(k);iron_dome_dot.YData=irondome_y(k);iron_dome_dot.ZData=irondome_z(k);
+            
+            %distance between palestine missile and iron-dome at the moment
+            judge_hit1 = sqrt((x(k)-irondome_x(k))^2+(y(k)-irondome_y(k))^2+(z(k)-irondome_z(k))^2);
+            judge_hit2 = sqrt((x(k)-irondome_x(k-1))^2+(y(k)-irondome_y(k-1))^2+(z(k)-irondome_z(k-1))^2);
+            judge_hit3 = sqrt((x(k)-(irondome_x(k)+irondome_x(k-1))/2)^2+(y(k)-(irondome_y(k)+irondome_y(k-1))/2)^2+(z(k)-(irondome_z(k)+irondome_z(k-1))/2)^2);
+            
+            if judge_hit1 < 200 || judge_hit2 < 200 || judge_hit3 < 200 %desired accuracy: 0.2% of axis
+                status = 'target intercepted'
+                hit_count = hit_count+1
+                break
+            end
+        end
+        
+        if k == length(t) %if iteration reaches the last time interval, consider the Palestine missile is NOT intercepted
+            status = 'exploded on land'
+            if strcmp(risk,'danger')
+                miss_count = miss_count + 1
+            else
+                safe_count = safe_count + 1
+            end
+            plot3(x(k),y(k),0,'ro')
+            break
+        end
+        
+        if rem(k,10) == 0 %every 10th iteration, collect Palestine missile`s coordinate data
+            xdetect(1,k/10) = x(k);
+            ydetect(1,k/10) = y(k);
+            zdetect(1,k/10) = z(k);
+        end
+        
+        if k == length(t)*0.79 %when Palestine missile has flied 79% of its trajectory, execute radar to predict its future coordinate
+            [X,Y,Z,I] = radar(xdetect,ydetect,zdetect);
+            aimtime = length(t)*0.8; %expected interception moment
+            aimx = X(1,aimtime/10);aimy = Y(1,aimtime/10);aimz = Z(1,aimtime/10); %expected interception coordinate
+            if 75000<X(I) && X(I)<85000 && 75000<Y(I) && Y(I)<85000 %judge if the Palestine missile is danger or safe
+                risk = 'danger'
+                
+                %Iron-dome will intercept missile at the top of its trajectory
+                timetake = sqrt(aimz/(4.9-Fz/(2*M)));
+                
+                %By calcurated time above, initial velocity of Iron-dome is calculated
+                vx = (80000-aimx+Fx*(timetake^2)/(2*M))/timetake;
+                vy = (80000-aimy+Fy*(timetake^2)/(2*M))/timetake;
+                vz = (aimz - ((Fz/(2*M)-4.9)*(timetake^2)))/timetake;
+                
+                %to index vectors, make timetake to integer
+                timetake_floored = floor(timetake);
+                
+                i = 1;
+                while i <= 2000+timetake_floored %save iron-dome`s expected future coordinates
+                    irondome_x(8000-timetake_floored-1+i) = 80000 - vx*i + 0.5*(Fx/M)*(i^2);
+                    irondome_y(8000-timetake_floored-1+i) = 80000 - vy*i + 0.5*(Fy/M)*(i^2);
+                    irondome_z(8000-timetake_floored-1+i) = vz*i+0.5*((Fz/M)-9.8)*(i^2);
+                    if irondome_z(8000-timetake_floored-1+i) < 0
+                        break
+                    end
+                    i = i + 1;
+                end
+            else
+                risk = 'safe'
+            end   
+        end
+        drawnow limitrate
+        k = k+1;
+    end
+    drawnow limitrate
+end
+hold off
